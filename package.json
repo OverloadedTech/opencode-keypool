@@ -1,0 +1,43 @@
+{
+  "name": "opencode-keypool",
+  "version": "0.1.0",
+  "description": "Global API-key rotation and provider/model failover for opencode, configured from a TUI",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "oc-keypool": "./src/cli.ts"
+  },
+  "exports": {
+    ".": "./src/plugin.ts",
+    "./cli": "./src/cli.ts"
+  },
+  "files": [
+    "src",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "opencode",
+    "keypool",
+    "rotation",
+    "failover",
+    "ai",
+    "llm",
+    "anthropic",
+    "openai",
+    "proxy",
+    "tui"
+  ],
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.7.0"
+  }
+}
