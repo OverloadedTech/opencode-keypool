@@ -1,16 +1,16 @@
 # Architecture
 
-opencode-keypool is a local, single-user proxy plus an opencode plugin. It
+opencode-route is a local, single-user proxy plus an opencode plugin. It
 has zero runtime dependencies and runs on Bun.
 
 ```text
 ┌──────────────┐   OpenAI-compatible HTTP   ┌─────────────────────────────┐
-│ opencode TUI │ ─────────────────────────► │ keypool daemon              │
+│ opencode TUI │ ─────────────────────────► │ route daemon              │
 │              │  x-session-affinity header │ 127.0.0.1:4777 (loopback)   │
 │  plugin.ts   │                            │                             │
 │  registers   │                            │  server.ts   routes         │
 │  provider    │                            │  engine.ts   rotation       │
-│  "keypool"   │                            │  adapters/   wire formats   │
+│  "route"     │                            │  adapters/   wire formats   │
 └──────────────┘                            └──────────┬──────────────────┘
                                                        │
               ┌────────────────────────────────────────┼───────────────────┐
@@ -28,9 +28,9 @@ has zero runtime dependencies and runs on Bun.
 
 | Module | Role |
 |---|---|
-| `src/plugin.ts` | opencode plugin. Reads the config, auto-starts the daemon, registers a `keypool` provider (`@ai-sdk/openai-compatible`, baseURL `http://127.0.0.1:<port>/v1`, `timeout: false`, no `chunkTimeout`) with one model per pool. |
+| `src/plugin.ts` | opencode plugin. Reads the config, auto-starts the daemon, registers a `route` provider (`@ai-sdk/openai-compatible`, baseURL `http://127.0.0.1:<port>/v1`, `timeout: false`, no `chunkTimeout`) with one model per pool. |
 | `src/server.ts` | Bun HTTP server. Endpoints below. Owns the never-stop retry loop, streaming pipes and config hot-reload (mtime polling, ~2 s). |
-| `src/engine.ts` | PoolEngine: pick logic (order, sticky sessions, skip sets), failure counters, per-entry cooldowns, optional circuit breaker, exhaustion wait estimation, stats. |
+| `src/engine.ts` | PoolEngine: pick logic (order, sticky sessions, skip sets), failure counters, per-entry cooldowns (honoring upstream `retry-after`, capped by `max_retry_after_seconds`), optional circuit breaker, exhaustion wait estimation, stats. |
 | `src/adapters/openai.ts` | Builds OpenAI-compatible requests (Bearer / `api-key` / no auth) and passes responses and SSE streams through unchanged. |
 | `src/adapters/anthropic.ts` | Translates OpenAI chat.completions to Anthropic `/v1/messages` and back: messages, system prompts, images, PDFs, tools, tool calls, streaming events (`message_start` → role chunk, `text_delta` → content, `input_json_delta` → incremental `tool_calls`, `message_delta` → `finish_reason` + usage). |
 | `src/proxy.ts` | Per-entry egress tunnels: HTTP CONNECT and SOCKS5 (with auth) via `node:net`/`node:tls`/`node:http(s)`, zero dependencies. |
@@ -44,12 +44,12 @@ has zero runtime dependencies and runs on Bun.
 | Route | Purpose |
 |---|---|
 | `POST /v1/chat/completions` | The proxy core. `model` selects the pool. Retries across entries per the failover rules. Supports `stream: true` (SSE). |
-| `GET /v1/models` | Lists pools as models (`keypool/<id>`). |
+| `GET /v1/models` | Lists pools as models (`route/<id>`). |
 | `GET /health` | Live status: breaker, per-entry cooldowns/failures/errors, counters, pool list. |
 | `GET /stats` | Breaker + counters only. |
 
-Debug headers on responses: `x-keypool-entry` (entry label) and
-`x-keypool-pool` (pool id) on non-stream responses.
+Debug headers on responses: `x-route-entry` (entry label) and
+`x-route-pool` (pool id) on non-stream responses.
 
 ## Request lifecycle
 

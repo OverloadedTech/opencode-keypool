@@ -50,7 +50,7 @@ export async function runTui(
   env: Env,
 ): Promise<void> {
   if (!env.isTTY) {
-    console.log("oc-keypool tui requires an interactive terminal.")
+    console.log("oc-route tui requires an interactive terminal.")
     return
   }
   process.stdin.setRawMode(true)
@@ -225,6 +225,7 @@ function activate(state: State, save: (config: PoolConfig) => void) {
         provider_breaker_seconds: clampInt(form.breakerSeconds, 10, 86400) ?? state.config.provider_breaker_seconds,
         upstream_timeout_seconds: clampInt(form.timeout, 30, 3600) ?? state.config.upstream_timeout_seconds,
         exhaust_wait_timeout_seconds: clampInt(form.waitBudget, 0, 86400) ?? state.config.exhaust_wait_timeout_seconds,
+        max_retry_after_seconds: clampInt(form.maxRetryAfter, 1, 604800) ?? state.config.max_retry_after_seconds ?? 86400,
       }
       const backoff = form.backoff.split(",").map((item) => Number(item.trim())).filter((n) => Number.isFinite(n) && n >= 0)
       if (backoff.length > 0) next.retry_backoff = backoff
@@ -337,6 +338,7 @@ type SettingsForm = {
   breakerSeconds: string
   timeout: string
   waitBudget: string
+  maxRetryAfter: string
   backoff: string
   fields: { label: string; value: string; cursor: number }[]
   focus: number
@@ -492,6 +494,7 @@ function openSettingsForm(state: State) {
     breakerSeconds: String(cfg.provider_breaker_seconds),
     timeout: String(cfg.upstream_timeout_seconds),
     waitBudget: String(cfg.exhaust_wait_timeout_seconds),
+    maxRetryAfter: String(cfg.max_retry_after_seconds ?? 86400),
     backoff: cfg.retry_backoff.join(", "),
     fields: [],
     focus: 0,
@@ -510,6 +513,7 @@ function syncSettingsFields(form: SettingsForm) {
     { label: "provider_breaker_seconds", value: form.breakerSeconds, cursor: form.breakerSeconds.length },
     { label: "upstream_timeout_seconds", value: form.timeout, cursor: form.timeout.length },
     { label: "exhaust_wait_timeout_seconds", value: form.waitBudget, cursor: form.waitBudget.length },
+    { label: "max_retry_after_seconds", value: form.maxRetryAfter, cursor: form.maxRetryAfter.length },
     { label: "retry_backoff", value: form.backoff, cursor: form.backoff.length },
   ]
 }
@@ -525,7 +529,8 @@ function syncSettings(form: SettingsForm, state: State) {
   form.breakerSeconds = values[6] ?? form.breakerSeconds
   form.timeout = values[7] ?? form.timeout
   form.waitBudget = values[8] ?? form.waitBudget
-  form.backoff = values[9] ?? form.backoff
+  form.maxRetryAfter = values[9] ?? form.maxRetryAfter
+  form.backoff = values[10] ?? form.backoff
   void state
 }
 
@@ -636,7 +641,7 @@ function visibleListHeight(state: State, rows: number): number {
 
 function renderScreen(state: State, cols: number, rows: number): string {
   const lines: string[] = []
-  const title = `${BOLD}oc-keypool${RESET} ${DIM}key rotation and provider failover${RESET}`
+  const title = `${BOLD}oc-route${RESET} ${DIM}IP rotation and never-stop failover${RESET}`
   lines.push(pad(title, cols))
   const daemon = daemonLine(state)
   lines.push(pad(daemon, cols))
@@ -665,7 +670,7 @@ function pad(text: string, cols: number): string {
 
 function daemonLine(state: State): string {
   const port = state.config.port
-  if (!state.health) return `${RED}daemon: down${RESET}  run "oc-keypool start" or open opencode to auto-start it`
+  if (!state.health) return `${RED}daemon: down${RESET}  run "oc-route start" or open opencode to auto-start it`
   const breaker = state.health.breaker
   let breakerText = ""
   if (breaker?.active) breakerText = `  ${RED}circuit breaker: ${breaker.remaining}s${RESET}`
@@ -779,7 +784,7 @@ function renderSettings(state: State, lines: string[], cols: number, rows: numbe
     lines.push(pad(`${prefix}  ${field.label.padEnd(32)}: ${field.value}${suffix}`, cols))
   }
   lines.push(pad(`${form.focus === form.fields.length ? REVERSE : ""}  [Save]${RESET}`, cols))
-  lines.push(pad(`${DIM}Note: port changes need a daemon restart ("oc-keypool restart")${RESET}`, cols))
+  lines.push(pad(`${DIM}Note: port changes need a daemon restart ("oc-route restart")${RESET}`, cols))
 }
 
 function renderHelp(state: State, lines: string[], cols: number, rows: number) {
@@ -787,22 +792,24 @@ function renderHelp(state: State, lines: string[], cols: number, rows: number) {
   const help = [
     "How it works",
     "",
-    "opencode talks to the keypool daemon (an OpenAI-compatible endpoint on 127.0.0.1).",
-    "Each pool is exposed as a model named after the pool id, e.g. keypool/default.",
+    "opencode talks to the route daemon (an OpenAI-compatible endpoint on 127.0.0.1).",
+    "Each pool is exposed as a model named after the pool id, e.g. route/default.",
     "Every request is routed to one entry: a specific (provider, model, API key).",
     "",
     "Failover order:",
     "  1. A session sticks to its current entry while it keeps working.",
-    "  2. Auth errors (401/403) cool the key down and the request retries the next entry.",
-    "  3. Rate limits (429) cool the key down and the request retries the next entry.",
-    "  4. Server errors (5xx) and network failures count against the key; after",
+    "  2. Auth errors (401/403) cool the entry down and the request retries the next.",
+    "  3. Rate limits (429) cool the entry down until the upstream retry-after (for",
+    "     Zen free models that is the next UTC midnight) and the request retries.",
+    "  4. Server errors (5xx) and network failures count against the entry; after",
     "     max_failures it cools down and the request moves on.",
-    "  5. When several different keys are rate limited at once, the circuit breaker",
-    "     opens for the whole pool: the upstream provider limits this machine, so",
-    "     burning more keys would waste the pool.",
+    "  5. When every entry is cooling down the request holds until the earliest",
+    "     reset and resumes on its own (never-stop; set exhaust_wait_timeout_seconds",
+    "     to bound the wait).",
     "",
-    "Entries are tried in list order, so put your best key first and use the rest",
-    "as fallback across models and providers.",
+    "Entries are tried in list order; each entry is a (provider, model, key, proxy)",
+    "combination. On Zen free models the limit is per IP, so give each entry its",
+    "own egress proxy/VPN to get its own quota.",
     "",
     "Keys",
     "  n        new entry          N        new pool",

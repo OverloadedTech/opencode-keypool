@@ -1,12 +1,12 @@
-# Contributing to opencode-keypool
+# Contributing to opencode-route
 
 Thanks for your interest in contributing.
 
 ## Getting started
 
 ```bash
-git clone https://github.com/<your-fork>/opencode-keypool
-cd opencode-keypool
+git clone https://github.com/<your-fork>/opencode-route
+cd opencode-route
 bun install
 bun run typecheck
 bun test

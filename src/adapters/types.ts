@@ -43,7 +43,7 @@ export function parseJson<T = unknown>(text: string): T | null {
   }
 }
 
-export function errorPayload(message: string, type = "upstream_error", code = "keypool_upstream_error"): string {
+export function errorPayload(message: string, type = "upstream_error", code = "route_upstream_error"): string {
   return JSON.stringify({ error: { message, type, code } })
 }
 

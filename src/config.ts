@@ -34,6 +34,7 @@ export type PoolConfig = {
   retry_backoff: number[]
   upstream_timeout_seconds: number
   exhaust_wait_timeout_seconds: number
+  max_retry_after_seconds?: number
   pools: Pool[]
 }
 
@@ -70,7 +71,8 @@ export const DEFAULT_CONFIG: PoolConfig = {
   provider_breaker_seconds: 900,
   retry_backoff: [0.4, 0.8, 1.5, 3.0],
   upstream_timeout_seconds: 600,
-  exhaust_wait_timeout_seconds: 3600,
+  exhaust_wait_timeout_seconds: 0,
+  max_retry_after_seconds: 86400,
   pools: [],
 }
 
@@ -84,11 +86,11 @@ export function stateHome(): string {
   return process.env.XDG_STATE_HOME || join(process.env.HOME || "/", ".local", "state")
 }
 
-export const CONFIG_DIR = join(xdgHome(), "opencode-keypool")
+export const CONFIG_DIR = join(xdgHome(), "opencode-route")
 export const CONFIG_PATH = join(CONFIG_DIR, "config.json")
-export const STATE_DIR = join(stateHome(), "opencode-keypool")
-export const PID_PATH = join(STATE_DIR, "keypool.pid")
-export const LOG_PATH = join(STATE_DIR, "keypool.log")
+export const STATE_DIR = join(stateHome(), "opencode-route")
+export const PID_PATH = join(STATE_DIR, "route.pid")
+export const LOG_PATH = join(STATE_DIR, "route.log")
 
 export function ensureDirs(): void {
   mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 })
@@ -159,6 +161,7 @@ function sanitizeConfig(raw: unknown): PoolConfig {
     retry_backoff: retry.length > 0 ? retry : DEFAULT_CONFIG.retry_backoff,
     upstream_timeout_seconds: num(raw.upstream_timeout_seconds, DEFAULT_CONFIG.upstream_timeout_seconds),
     exhaust_wait_timeout_seconds: num(raw.exhaust_wait_timeout_seconds, DEFAULT_CONFIG.exhaust_wait_timeout_seconds),
+    max_retry_after_seconds: num(raw.max_retry_after_seconds, DEFAULT_CONFIG.max_retry_after_seconds ?? 86400),
     pools,
   }
 }

@@ -6,12 +6,12 @@ import { CONFIG_PATH, loadConfig, saveConfig } from "./config.ts"
 import { daemonPid, findBun, health, spawnDaemon, spawnDaemonAsync, stopDaemon, waitForHealth } from "./daemon.ts"
 import { serve } from "./server.ts"
 
-const HELP = `oc-keypool — global API-key rotation and provider failover for opencode
+const HELP = `oc-route — per-entry IP/proxy rotation and never-stop failover for opencode
 
-Usage: oc-keypool <command> [options]
+Usage: oc-route <command> [options]
 
 Commands:
-  tui                 configure pools, keys and providers in a TUI (default)
+  tui                 configure pools, proxies and providers in a TUI (default)
   serve [--port N]    run the rotation proxy in the foreground
   start [--port N]    start the rotation proxy as a background daemon
   stop                stop the background daemon
@@ -74,7 +74,7 @@ function readOpencodeConfig(path: string): { config: Record<string, unknown> | n
 }
 
 export function installPlugin(self: boolean, configPath: string = opencodeGlobalConfig()): void {
-  const target = self ? new URL("./plugin.ts", import.meta.url).pathname : "opencode-keypool"
+  const target = self ? new URL("./plugin.ts", import.meta.url).pathname : "opencode-route"
   mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 })
   const { config } = readOpencodeConfig(configPath)
   const next = config ?? {}
@@ -90,7 +90,17 @@ export function installPlugin(self: boolean, configPath: string = opencodeGlobal
   }
   writeFileSync(configPath, JSON.stringify(next, null, 2) + "\n", { mode: 0o600 })
   console.log(`Registered plugin entry "${target}" in ${configPath}`)
-  console.log("Restart opencode to load the plugin. Then pick a keypool model with /models or in Settings.")
+  console.log("Restart opencode to load the plugin. Then pick a route model with /models or in Settings.")
+}
+
+function isRoutePlugin(value: unknown): boolean {
+  if (typeof value !== "string") return false
+  return (
+    value === "opencode-route" ||
+    value === "oc-keypool" ||
+    value.endsWith("opencode-route/src/plugin.ts") ||
+    value.endsWith("opencode-keypool/src/plugin.ts")
+  )
 }
 
 export function uninstallPlugin(configPath: string = opencodeGlobalConfig()): void {
@@ -101,17 +111,17 @@ export function uninstallPlugin(configPath: string = opencodeGlobalConfig()): vo
   }
   const plugins = Array.isArray(config.plugin) ? (config.plugin as unknown[]) : []
   const filtered = plugins.filter((entry) => {
-    if (typeof entry === "string") return !(entry === "opencode-keypool" || entry.endsWith("opencode-keypool/src/plugin.ts"))
-    if (Array.isArray(entry) && typeof entry[0] === "string") return !(entry[0] === "opencode-keypool" || entry[0].endsWith("opencode-keypool/src/plugin.ts"))
+    if (typeof entry === "string") return !isRoutePlugin(entry)
+    if (Array.isArray(entry)) return !isRoutePlugin(entry[0])
     return true
   })
   config.plugin = filtered
   if (filtered.length === 0) delete config.plugin
   writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 })
   if (raw !== JSON.stringify(config, null, 2)) {
-    console.log(`Removed opencode-keypool from ${configPath}. Restart opencode to apply.`)
+    console.log(`Removed opencode-route from ${configPath}. Restart opencode to apply.`)
   } else {
-    console.log("opencode-keypool was not registered.")
+    console.log("opencode-route was not registered.")
   }
 }
 
@@ -168,13 +178,13 @@ async function main(): Promise<void> {
   const rest = args.slice(1)
   const configPath = configPathFromArgs(rest)
   if (command === "version") {
-    console.log("opencode-keypool 0.1.0")
+    console.log("opencode-route 0.1.0")
     return
   }
   if (command === "serve") {
     const port = portFromArgs(rest)
     const server = serve(configPath, port)
-    console.log(`keypool daemon listening on ${server.url}`)
+    console.log(`route daemon listening on ${server.url}`)
     const stop = () => {
       void server.stop().finally(() => process.exit(0))
     }
@@ -234,9 +244,9 @@ async function main(): Promise<void> {
     const plugins = Array.isArray(oc?.plugin) ? (oc.plugin as unknown[]) : []
     const registered = plugins.some((entry) => {
       const value = Array.isArray(entry) ? entry[0] : entry
-      return typeof value === "string" && value.includes("opencode-keypool")
+      return isRoutePlugin(value)
     })
-    console.log(`opencode plugin: ${registered ? "registered" : "NOT registered (run oc-keypool install)"}`)
+    console.log(`opencode plugin: ${registered ? "registered" : "NOT registered (run oc-route install)"}`)
     return
   }
   if (command === "list") {

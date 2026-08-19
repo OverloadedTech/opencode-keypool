@@ -5,7 +5,7 @@ import { configMtime, findPool, loadConfig, type PoolConfig } from "./config.ts"
 import type { Entry } from "./config.ts"
 import { fetchViaProxy } from "./proxy.ts"
 
-export type KeypoolServer = {
+export type RouteServer = {
   hostname: string
   port: number
   stop(): Promise<void>
@@ -43,7 +43,7 @@ function breakerResponse(engine: PoolEngine, retryAfter: number): Response {
     {
       error: {
         type: "ProviderCooldown",
-        message: "Keypool circuit breaker is open: too many distinct keys were rate limited.",
+        message: "Route circuit breaker is open: too many distinct entries were rate limited.",
         retry_after: retryAfter,
         reason: breaker.reason,
       },
@@ -56,7 +56,7 @@ function poolMissingResponse(available: string[]): Response {
   return jsonResponse(404, {
     error: {
       type: "PoolNotFound",
-      message: `Unknown keypool model. Available pools: ${available.join(", ") || "none configured"}`,
+      message: `Unknown route model. Available pools: ${available.join(", ") || "none configured"}`,
     },
   })
 }
@@ -81,7 +81,7 @@ function streamErrorResponse(message: string): Response {
   const encoder = new TextEncoder()
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: { message, type: "keypool_error" } })}\n\n`))
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: { message, type: "route_error" } })}\n\n`))
       controller.enqueue(encoder.encode("data: [DONE]\n\n"))
       controller.close()
     },
@@ -109,7 +109,7 @@ async function runRequest(
   const pool = findPool(config, poolId)
   if (!pool) return poolMissingResponse(config.pools.map((candidate) => candidate.id))
   if (pool.entries.length === 0) {
-    return jsonResponse(502, { error: { message: `Pool "${poolId}" has no entries. Add keys with "oc-keypool tui".`, type: "PoolEmpty" } })
+    return jsonResponse(502, { error: { message: `Pool "${poolId}" has no entries. Add entries with "oc-route tui".`, type: "PoolEmpty" } })
   }
   engine.recordRequest()
   const startedAt = Date.now()
@@ -152,6 +152,13 @@ function budgetOver(startedAt: number, waitMs: number, budgetMs: number): boolea
   return Date.now() - startedAt + waitMs > budgetMs
 }
 
+function parseRetryAfter(response: Response): number | undefined {
+  const value = response.headers.get("retry-after")
+  if (!value) return undefined
+  const seconds = Number(value.trim())
+  return Number.isFinite(seconds) && seconds >= 0 ? Math.floor(seconds) : undefined
+}
+
 async function attemptEntry(
   config: PoolConfig,
   engine: PoolEngine,
@@ -186,10 +193,11 @@ async function attemptEntry(
     const text = await readUpstreamError(response)
     const kind = adapter.classify(response.status, text)
     const message = adapter.errorMessage(response.status, text)
+    const retryAfter = parseRetryAfter(response)
     if (kind === "auth") {
       engine.onAuthFailure(entry.id, message, session)
     } else if (kind === "rate_limit") {
-      engine.onRateLimit(entry.id, message, session)
+      engine.onRateLimit(entry.id, retryAfter !== undefined ? `${message} (retry-after ${retryAfter}s)` : message, session, retryAfter)
     } else if (kind === "upstream") {
       engine.onUpstreamError(entry.id, message, session)
     } else {
@@ -208,8 +216,8 @@ async function attemptEntry(
       status: 200,
       headers: {
         "Content-Type": "application/json",
-        "x-keypool-entry": entry.label,
-        "x-keypool-pool": poolId,
+        "x-route-entry": entry.label,
+        "x-route-pool": poolId,
       },
     }),
   }
@@ -239,7 +247,7 @@ function pipeStream(
       } catch (error) {
         const message = String(error instanceof Error ? error.message : error)
         engine.onUpstreamError(entry.id, message)
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: { message: `Upstream stream failed: ${message}`, type: "keypool_stream_error" } })}\n\n`))
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: { message: `Upstream stream failed: ${message}`, type: "route_stream_error" } })}\n\n`))
         controller.enqueue(encoder.encode("data: [DONE]\n\n"))
         sentDone = true
         controller.close()
@@ -280,7 +288,7 @@ function pipeStream(
   })
 }
 
-export function serve(configPath?: string, portOverride?: number): KeypoolServer {
+export function serve(configPath?: string, portOverride?: number): RouteServer {
   let config = configPath ? loadConfig(configPath) : loadConfig()
   if (portOverride) config.port = portOverride
   const engine = new PoolEngine(config)
@@ -292,7 +300,7 @@ export function serve(configPath?: string, portOverride?: number): KeypoolServer
       lastMtime = mtime
       const fresh = configPath ? loadConfig(configPath) : loadConfig()
       if (fresh.port !== config.port) {
-        console.warn(`[keypool] config port changed to ${fresh.port}; restart the daemon to apply`)
+        console.warn(`[route] config port changed to ${fresh.port}; restart the daemon to apply`)
       }
       config = { ...fresh, port: config.port }
       engine.reload(config)
@@ -312,7 +320,12 @@ export function serve(configPath?: string, portOverride?: number): KeypoolServer
           version: "0.1.0",
           uptime_seconds: Math.floor((Date.now() - startedAt) / 1000),
           port: config.port,
-          pools: config.pools.map((pool) => ({ id: pool.id, label: pool.label, entries: pool.entries.length })),
+          pools: config.pools.map((pool) => ({
+            id: pool.id,
+            label: pool.label,
+            entries: pool.entries.length,
+            next_reset_seconds: engine.exhaustionWaitSeconds(pool.id),
+          })),
           breaker,
           entries: engine.status(),
           stats: engine.stats,
@@ -328,7 +341,7 @@ export function serve(configPath?: string, portOverride?: number): KeypoolServer
             id: pool.id,
             object: "model",
             created: Math.floor(startedAt / 1000),
-            owned_by: "keypool",
+            owned_by: "route",
             name: pool.label,
           })),
         })

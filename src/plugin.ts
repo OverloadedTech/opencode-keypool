@@ -3,22 +3,18 @@ import { join } from "node:path"
 import { daemonPid, findBun, health, waitForHealth } from "./daemon.ts"
 import { LOG_PATH, PID_PATH, STATE_DIR } from "./config.ts"
 
-type PluginConfig = {
+type RouteConfig = {
   provider?: Record<string, unknown>
   [key: string]: unknown
 }
 
-type PluginInput = {
-  config: PluginConfig
-  directory: string
-  $: { [key: string]: (...args: unknown[]) => unknown }
-}
-
-export type KeypoolPlugin = (input: PluginInput) => Promise<Record<string, never>>
+export type RoutePlugin = () => Promise<{
+  config?: (cfg: RouteConfig) => void
+}>
 
 export const PLUGIN_CONFIG_DIR = join(
   process.env.XDG_CONFIG_HOME || join(process.env.HOME || "/", ".config"),
-  "opencode-keypool",
+  "opencode-route",
 )
 export const PLUGIN_CONFIG_PATH = join(PLUGIN_CONFIG_DIR, "config.json")
 
@@ -53,10 +49,12 @@ function writeBootstrap(config: PoolConfigFile): void {
             max_failures: 5,
             rate_limit_cooldown_seconds: 60,
             auth_fail_cooldown_seconds: 1800,
-            provider_breaker_trigger: 2,
+            provider_breaker_trigger: 0,
             provider_breaker_seconds: 900,
             retry_backoff: [0.4, 0.8, 1.5, 3.0],
             upstream_timeout_seconds: 600,
+            exhaust_wait_timeout_seconds: 0,
+            max_retry_after_seconds: 86400,
             pools: config.pools ?? [],
           },
           null,
@@ -104,20 +102,23 @@ function poolModels(config: PoolConfigFile): Record<string, Record<string, unkno
   return models
 }
 
-export default (async ({ config }: PluginInput) => {
+export default (async () => {
   const poolConfig = readConfig()
   writeBootstrap(poolConfig)
   void ensureDaemon(poolConfig.port)
-  config.provider = config.provider ?? {}
-  config.provider.keypool = {
-    npm: "@ai-sdk/openai-compatible",
-    name: "Keypool (rotated keys + provider failover)",
-    options: {
-      baseURL: `http://127.0.0.1:${poolConfig.port}/v1`,
-      apiKey: "keypool",
-      timeout: false,
+  return {
+    config(cfg: RouteConfig) {
+      cfg.provider = cfg.provider ?? {}
+      cfg.provider.route = {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Route (IP rotation + never-stop failover)",
+        options: {
+          baseURL: `http://127.0.0.1:${poolConfig.port}/v1`,
+          apiKey: "route",
+          timeout: false,
+        },
+        models: poolModels(poolConfig),
+      }
     },
-    models: poolModels(poolConfig),
   }
-  return {}
-}) as KeypoolPlugin
+}) as RoutePlugin

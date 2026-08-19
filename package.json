@@ -1,11 +1,11 @@
 {
-  "name": "opencode-keypool",
+  "name": "opencode-route",
   "version": "0.1.0",
   "description": "Global API-key rotation and provider/model failover for opencode, configured from a TUI",
   "type": "module",
   "license": "MIT",
   "bin": {
-    "oc-keypool": "./src/cli.ts"
+    "oc-route": "./src/cli.ts"
   },
   "exports": {
     ".": "./src/plugin.ts",
@@ -23,7 +23,7 @@
   },
   "keywords": [
     "opencode",
-    "keypool",
+    "route",
     "rotation",
     "failover",
     "ai",

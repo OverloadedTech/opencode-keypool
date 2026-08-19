@@ -55,7 +55,7 @@ export async function spawnDaemonAsync(port?: number): Promise<number> {
   ensureDirs()
   const existing = daemonPid()
   if (existing) {
-    console.log(`keypool daemon already running (pid ${existing}).`)
+    console.log(`route daemon already running (pid ${existing}).`)
     process.exit(0)
   }
   if (port && (await health(port, 400))) {
@@ -74,7 +74,7 @@ export function spawnDaemon(port?: number): number {
   }
   const existing = daemonPid()
   if (existing) {
-    console.log(`keypool daemon already running (pid ${existing}).`)
+    console.log(`route daemon already running (pid ${existing}).`)
     process.exit(0)
   }
   const logFd = openSync(LOG_PATH, "a")
@@ -87,14 +87,14 @@ export function spawnDaemon(port?: number): number {
   })
   proc.unref()
   writeFileSync(PID_PATH, String(proc.pid), { mode: 0o600 })
-  console.log(`keypool daemon started (pid ${proc.pid}), log: ${LOG_PATH}`)
+  console.log(`route daemon started (pid ${proc.pid}), log: ${LOG_PATH}`)
   return proc.pid
 }
 
 export function stopDaemon(): boolean {
   const pid = daemonPid()
   if (!pid) {
-    console.log("keypool daemon is not running.")
+    console.log("route daemon is not running.")
     return false
   }
   try {
@@ -118,7 +118,7 @@ export function stopDaemon(): boolean {
       } catch {
         //
       }
-      console.log(`keypool daemon stopped (pid ${pid}).`)
+      console.log(`route daemon stopped (pid ${pid}).`)
       return true
     }
   }

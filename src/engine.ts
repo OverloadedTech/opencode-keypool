@@ -156,13 +156,13 @@ export class PoolEngine {
     this.stats.auth_failures++
   }
 
-  onRateLimit(entryId: string, reason: string, sessionId: string | null = null): void {
+  onRateLimit(entryId: string, reason: string, sessionId: string | null = null, retryAfterSeconds?: number): void {
     if (sessionId) this.sessions.delete(sessionId)
     const now = Date.now()
-    this.cooldownUntil.set(
-      entryId,
-      Math.max(this.cooldownUntil.get(entryId) ?? 0, now + this.config.rate_limit_cooldown_seconds * 1000),
-    )
+    const fallback = this.config.rate_limit_cooldown_seconds * 1000
+    const cap = (this.config.max_retry_after_seconds ?? 86400) * 1000
+    const delay = retryAfterSeconds !== undefined ? Math.min(retryAfterSeconds * 1000, cap) : fallback
+    this.cooldownUntil.set(entryId, Math.max(this.cooldownUntil.get(entryId) ?? 0, now + Math.max(1, delay)))
     this.fails.set(entryId, 0)
     this.lastError.set(entryId, reason.slice(0, 200))
     this.lastUsed.set(entryId, now)

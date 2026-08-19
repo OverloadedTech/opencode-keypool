@@ -89,6 +89,30 @@ describe("PoolEngine", () => {
     expect(wait).toBeLessThanOrEqual(30)
   })
 
+  test("rate limit honors upstream retry-after", () => {
+    const engine = new PoolEngine(makeConfig({ provider_breaker_trigger: 0 }))
+    engine.onRateLimit("a", "429", null, 120)
+    const cooldown = engine.entryStatus("a")?.cooldown ?? 0
+    expect(cooldown).toBeGreaterThan(118)
+    expect(cooldown).toBeLessThanOrEqual(120)
+  })
+
+  test("rate limit falls back to configured cooldown without retry-after", () => {
+    const engine = new PoolEngine(makeConfig({ rate_limit_cooldown_seconds: 7, provider_breaker_trigger: 0 }))
+    engine.onRateLimit("a", "429")
+    const cooldown = engine.entryStatus("a")?.cooldown ?? 0
+    expect(cooldown).toBeGreaterThan(6)
+    expect(cooldown).toBeLessThanOrEqual(7)
+  })
+
+  test("rate limit retry-after is capped by max_retry_after_seconds", () => {
+    const engine = new PoolEngine(makeConfig({ provider_breaker_trigger: 0, max_retry_after_seconds: 10 }))
+    engine.onRateLimit("a", "429", null, 9999)
+    const cooldown = engine.entryStatus("a")?.cooldown ?? 0
+    expect(cooldown).toBeGreaterThan(9)
+    expect(cooldown).toBeLessThanOrEqual(10)
+  })
+
   test("success resets failure counters", () => {
     const engine = new PoolEngine(makeConfig({ max_failures: 3 }))
     engine.onFailure("a", "boom")

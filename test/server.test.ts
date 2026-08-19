@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { serve, type KeypoolServer } from "../src/server.ts"
+import { serve, type RouteServer } from "../src/server.ts"
 
 type Mock = {
   url: string
@@ -34,7 +34,7 @@ function chatJson(content: string): string {
 }
 
 type TestEnv = {
-  server: KeypoolServer
+  server: RouteServer
   configPath: string
   dir: string
   mocks: Mock[]
@@ -46,7 +46,7 @@ afterEach(async () => {
 })
 
 function writePoolConfig(entries: Record<string, unknown>[], overrides: Record<string, unknown> = {}): string {
-  const dir = mkdtempSync(join(tmpdir(), "keypool-test-"))
+  const dir = mkdtempSync(join(tmpdir(), "route-test-"))
   const configPath = join(dir, "config.json")
   writeFileSync(
     configPath,
@@ -97,7 +97,7 @@ function dirOf(configPath: string): string {
   return join(configPath, "..")
 }
 
-async function post(server: KeypoolServer, body: unknown, headers: Record<string, string> = {}): Promise<Response> {
+async function post(server: RouteServer, body: unknown, headers: Record<string, string> = {}): Promise<Response> {
   return fetch(`${server.url.replace(/\/$/, "")}/v1/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...headers },
@@ -110,7 +110,7 @@ async function jsonOf(response: Response): Promise<any> {
   return response.json()
 }
 
-describe("keypool server", () => {
+describe("route server", () => {
   test("fails over to the next key on 401", async () => {
     const bad = mockUpstream((request) => {
       if (request.headers.get("Authorization") === "Bearer k1") {
@@ -228,6 +228,38 @@ describe("keypool server", () => {
     const health = await jsonOf(healthRes)
     expect(health.stats.waits).toBeGreaterThan(0)
     expect(health.stats.failovers).toBeGreaterThan(0)
+  })
+
+  test("honors upstream retry-after instead of the configured cooldown", async () => {
+    const limited = mockUpstream((request) => {
+      if (request.headers.get("Authorization") === "Bearer k1") {
+        return new Response(JSON.stringify({ error: { type: "FreeUsageLimitError", message: "ip limited" } }), {
+          status: 429,
+          headers: { "retry-after": "2" },
+        })
+      }
+      return new Response(chatJson("ok via key 2"), { status: 200 })
+    })
+    const env = await startServer(
+      writePoolConfig(
+        [
+          baseEntry({ id: "e1", base_url: limited.url, api_key: "k1" }),
+          baseEntry({ id: "e2", base_url: limited.url, api_key: "k2" }),
+        ],
+        { rate_limit_cooldown_seconds: 30, provider_breaker_trigger: 0 },
+      ),
+    )
+    env.mocks.push(limited)
+    const response = await post(env.server, { model: "main", messages: [{ role: "user", content: "hi" }] })
+    expect(response.status).toBe(200)
+    const healthRes = await fetch(`${env.server.url.replace(/\/$/, "")}/health`)
+    const health = await jsonOf(healthRes)
+    const e1 = health.entries.find((entry: { id: string }) => entry.id === "e1")
+    expect(e1.cooldown).toBeGreaterThan(0)
+    expect(e1.cooldown).toBeLessThanOrEqual(2)
+    expect(e1.last_error).toContain("retry-after")
+    const pool = health.pools.find((candidate: { id: string }) => candidate.id === "main")
+    expect(pool.next_reset_seconds).toBeLessThanOrEqual(2)
   })
 
   test("gives up with 502 when the wait budget is exhausted", async () => {
